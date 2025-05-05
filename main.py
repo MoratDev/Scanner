@@ -5,7 +5,7 @@ import tempfile
 import io
 from datetime import datetime
 import uuid
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageTk
 import fitz  # PyMuPDF
 from PyPDF2 import PdfReader, PdfWriter
 import tkinter as tk
@@ -13,6 +13,28 @@ from tkinter import filedialog, ttk, messagebox
 import threading
 
 class PDFScannerEffects:
+    # List of realistic printer/scanner names
+    PRINTER_NAMES = [
+        "HP ScanJet Pro 3000",
+        "Canon imageFORMULA DR-C225",
+        "Epson WorkForce ES-400",
+        "Brother ADS-2700W",
+        "Fujitsu ScanSnap iX1500",
+        "HP ScanJet Enterprise Flow 7000 s3",
+        "Canon CanoScan LiDE 400",
+        "Epson Perfection V600",
+        "Brother MFC-L3770CDW",
+        "HP LaserJet Pro MFP M428fdw",
+        "Canon PIXMA TR8620",
+        "Epson Expression Home XP-4100",
+        "Xerox WorkCentre 6515",
+        "Ricoh SP 230DNw",
+        "Samsung Xpress M2020W",
+        "Lexmark MB2236adw",
+        "Dell E310dw",
+        "Kyocera ECOSYS M5521cdw"
+    ]
+    
     @staticmethod
     def convert_page_to_image(page, dpi=150):
         """Convert a PDF page to a PIL Image"""
@@ -191,7 +213,7 @@ class ScannerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("PDF Scanner Effect Creator")
-        self.root.geometry("600x600")
+        self.root.geometry("800x800")
         
         self.input_pdf = tk.StringVar()
         self.output_pdf = tk.StringVar()
@@ -208,67 +230,187 @@ class ScannerApp:
         self.add_shadow = tk.BooleanVar(value=True)
         self.blur = tk.DoubleVar(value=0.5)
         
+        # Preview variables
+        self.pdf_doc = None
+        self.current_page = 0
+        self.total_pages = 0
+        self.preview_image = None
+        
         self.create_widgets()
     
     def create_widgets(self):
+        # Main container with paned window
+        main_paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
+        main_paned.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Left frame for controls
+        left_frame = ttk.Frame(main_paned)
+        main_paned.add(left_frame, weight=1)
+        
+        # Right frame for preview
+        right_frame = ttk.LabelFrame(main_paned, text="PDF Preview")
+        main_paned.add(right_frame, weight=1)
+        
         # File selection frame
-        file_frame = ttk.LabelFrame(self.root, text="File Selection")
-        file_frame.pack(fill="x", expand=True, padx=10, pady=10)
+        file_frame = ttk.LabelFrame(left_frame, text="File Selection")
+        file_frame.pack(fill="x", padx=5, pady=5)
         
         ttk.Label(file_frame, text="Input PDF:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
-        ttk.Entry(file_frame, textvariable=self.input_pdf, width=40).grid(row=0, column=1, padx=5, pady=5)
+        ttk.Entry(file_frame, textvariable=self.input_pdf, width=30).grid(row=0, column=1, padx=5, pady=5)
         ttk.Button(file_frame, text="Browse...", command=self.browse_input).grid(row=0, column=2, padx=5, pady=5)
         
         ttk.Label(file_frame, text="Output PDF:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
-        ttk.Entry(file_frame, textvariable=self.output_pdf, width=40).grid(row=1, column=1, padx=5, pady=5)
+        ttk.Entry(file_frame, textvariable=self.output_pdf, width=30).grid(row=1, column=1, padx=5, pady=5)
         ttk.Button(file_frame, text="Browse...", command=self.browse_output).grid(row=1, column=2, padx=5, pady=5)
         
         # Options frame
-        options_frame = ttk.LabelFrame(self.root, text="Scanning Effect Options")
-        options_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        options_frame = ttk.LabelFrame(left_frame, text="Scanning Effect Options")
+        options_frame.pack(fill="both", expand=True, padx=5, pady=5)
         
         # Basic options
-        ttk.Checkbutton(options_frame, text="Add rotation", variable=self.rotate).grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
-        ttk.Label(options_frame, text="Max rotation:").grid(row=0, column=1, sticky=tk.W, padx=5, pady=5)
-        ttk.Scale(options_frame, from_=0.1, to=5.0, variable=self.max_rotation, orient=tk.HORIZONTAL).grid(row=0, column=2, padx=5, pady=5)
+        ttk.Checkbutton(options_frame, text="Add rotation", variable=self.rotate).grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(options_frame, text="Max rotation:").grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Scale(options_frame, from_=0.1, to=5.0, variable=self.max_rotation, orient=tk.HORIZONTAL, length=100).grid(row=0, column=2, padx=5, pady=2)
         
-        ttk.Checkbutton(options_frame, text="Grayscale", variable=self.grayscale).grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
-        ttk.Checkbutton(options_frame, text="Black & White", variable=self.bw).grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
+        ttk.Checkbutton(options_frame, text="Grayscale", variable=self.grayscale).grid(row=1, column=0, sticky=tk.W, padx=5, pady=2)
+        ttk.Checkbutton(options_frame, text="Black & White", variable=self.bw).grid(row=1, column=1, sticky=tk.W, padx=5, pady=2)
         
-        ttk.Checkbutton(options_frame, text="Add noise", variable=self.add_noise).grid(row=2, column=0, sticky=tk.W, padx=5, pady=5)
-        ttk.Checkbutton(options_frame, text="Add shadow", variable=self.add_shadow).grid(row=2, column=1, sticky=tk.W, padx=5, pady=5)
+        ttk.Checkbutton(options_frame, text="Add noise", variable=self.add_noise).grid(row=2, column=0, sticky=tk.W, padx=5, pady=2)
+        ttk.Checkbutton(options_frame, text="Add shadow", variable=self.add_shadow).grid(row=2, column=1, sticky=tk.W, padx=5, pady=2)
         
-        ttk.Checkbutton(options_frame, text="Add fold marks", variable=self.fold_marks).grid(row=3, column=0, sticky=tk.W, padx=5, pady=5)
-        ttk.Label(options_frame, text="Number of folds:").grid(row=3, column=1, sticky=tk.W, padx=5, pady=5)
-        ttk.Spinbox(options_frame, from_=1, to=5, textvariable=self.fold_count, width=5).grid(row=3, column=2, sticky=tk.W, padx=5, pady=5)
+        ttk.Checkbutton(options_frame, text="Add fold marks", variable=self.fold_marks).grid(row=3, column=0, sticky=tk.W, padx=5, pady=2)
+        ttk.Label(options_frame, text="Folds:").grid(row=3, column=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Spinbox(options_frame, from_=1, to=5, textvariable=self.fold_count, width=5).grid(row=3, column=2, sticky=tk.W, padx=5, pady=2)
         
-        ttk.Label(options_frame, text="DPI:").grid(row=4, column=0, sticky=tk.W, padx=5, pady=5)
-        ttk.Scale(options_frame, from_=72, to=300, variable=self.dpi, orient=tk.HORIZONTAL).grid(row=4, column=1, columnspan=2, padx=5, pady=5)
+        ttk.Label(options_frame, text="DPI:").grid(row=4, column=0, sticky=tk.W, padx=5, pady=2)
+        ttk.Scale(options_frame, from_=72, to=300, variable=self.dpi, orient=tk.HORIZONTAL, length=150).grid(row=4, column=1, columnspan=2, padx=5, pady=2)
         
-        ttk.Label(options_frame, text="JPEG Quality:").grid(row=5, column=0, sticky=tk.W, padx=5, pady=5)
-        ttk.Scale(options_frame, from_=50, to=100, variable=self.quality, orient=tk.HORIZONTAL).grid(row=5, column=1, columnspan=2, padx=5, pady=5)
+        ttk.Label(options_frame, text="Quality:").grid(row=5, column=0, sticky=tk.W, padx=5, pady=2)
+        ttk.Scale(options_frame, from_=50, to=100, variable=self.quality, orient=tk.HORIZONTAL, length=150).grid(row=5, column=1, columnspan=2, padx=5, pady=2)
         
-        ttk.Label(options_frame, text="Blur:").grid(row=6, column=0, sticky=tk.W, padx=5, pady=5)
-        ttk.Scale(options_frame, from_=0, to=2.0, variable=self.blur, orient=tk.HORIZONTAL).grid(row=6, column=1, columnspan=2, padx=5, pady=5)
+        ttk.Label(options_frame, text="Blur:").grid(row=6, column=0, sticky=tk.W, padx=5, pady=2)
+        ttk.Scale(options_frame, from_=0, to=2.0, variable=self.blur, orient=tk.HORIZONTAL, length=150).grid(row=6, column=1, columnspan=2, padx=5, pady=2)
         
-        ttk.Label(options_frame, text="Scanner name:").grid(row=7, column=0, sticky=tk.W, padx=5, pady=5)
-        ttk.Entry(options_frame, textvariable=self.scanner_name, width=30).grid(row=7, column=1, columnspan=2, sticky=tk.W, padx=5, pady=5)
+        # Scanner name frame
+        scanner_frame = ttk.Frame(options_frame)
+        scanner_frame.grid(row=7, column=0, columnspan=3, sticky="ew", padx=5, pady=5)
+        
+        ttk.Label(scanner_frame, text="Scanner:").pack(side=tk.LEFT)
+        ttk.Entry(scanner_frame, textvariable=self.scanner_name, width=25).pack(side=tk.LEFT, padx=5)
+        ttk.Button(scanner_frame, text="Random", command=self.randomize_scanner).pack(side=tk.LEFT, padx=5)
         
         # Progress bar
-        self.progress = ttk.Progressbar(self.root, orient=tk.HORIZONTAL, length=580, mode='determinate')
-        self.progress.pack(fill="x", padx=10, pady=10)
+        self.progress = ttk.Progressbar(left_frame, orient=tk.HORIZONTAL, mode='determinate')
+        self.progress.pack(fill="x", padx=5, pady=5)
         
         # Status label
         self.status_var = tk.StringVar(value="Ready")
-        self.status_label = ttk.Label(self.root, textvariable=self.status_var)
-        self.status_label.pack(padx=10, pady=5)
+        self.status_label = ttk.Label(left_frame, textvariable=self.status_var)
+        self.status_label.pack(padx=5, pady=2)
         
         # Action buttons
-        button_frame = ttk.Frame(self.root)
-        button_frame.pack(fill="x", padx=10, pady=10)
+        button_frame = ttk.Frame(left_frame)
+        button_frame.pack(fill="x", padx=5, pady=5)
         
-        ttk.Button(button_frame, text="Create Scanned PDF", command=self.process_pdf_threaded).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(button_frame, text="Exit", command=self.root.quit).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="Create Scanned PDF", command=self.process_pdf_threaded).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(button_frame, text="Exit", command=self.root.quit).pack(side=tk.RIGHT, padx=2)
+        
+        # Preview section
+        self.setup_preview(right_frame)
+    
+    def setup_preview(self, parent):
+        """Setup the PDF preview section"""
+        # Preview controls
+        control_frame = ttk.Frame(parent)
+        control_frame.pack(fill="x", padx=5, pady=5)
+        
+        self.prev_button = ttk.Button(control_frame, text="◀ Previous", command=self.prev_page, state="disabled")
+        self.prev_button.pack(side=tk.LEFT, padx=5)
+        
+        self.page_label = ttk.Label(control_frame, text="No PDF loaded")
+        self.page_label.pack(side=tk.LEFT, expand=True)
+        
+        self.next_button = ttk.Button(control_frame, text="Next ▶", command=self.next_page, state="disabled")
+        self.next_button.pack(side=tk.RIGHT, padx=5)
+        
+        # Preview canvas
+        self.preview_canvas = tk.Canvas(parent, bg="white", width=300, height=400)
+        self.preview_canvas.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Scrollbars for canvas
+        v_scrollbar = ttk.Scrollbar(parent, orient="vertical", command=self.preview_canvas.yview)
+        v_scrollbar.pack(side="right", fill="y")
+        h_scrollbar = ttk.Scrollbar(parent, orient="horizontal", command=self.preview_canvas.xview)
+        h_scrollbar.pack(side="bottom", fill="x")
+        
+        self.preview_canvas.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+    
+    def randomize_scanner(self):
+        """Randomize the scanner name from the predefined list"""
+        random_scanner = random.choice(PDFScannerEffects.PRINTER_NAMES)
+        self.scanner_name.set(random_scanner)
+    
+    def load_pdf_preview(self, pdf_path):
+        """Load PDF for preview"""
+        try:
+            if self.pdf_doc:
+                self.pdf_doc.close()
+            
+            self.pdf_doc = fitz.open(pdf_path)
+            self.total_pages = len(self.pdf_doc)
+            self.current_page = 0
+            
+            if self.total_pages > 0:
+                self.update_preview()
+                self.prev_button.config(state="normal" if self.total_pages > 1 else "disabled")
+                self.next_button.config(state="normal" if self.total_pages > 1 else "disabled")
+            else:
+                self.page_label.config(text="Empty PDF")
+                
+        except Exception as e:
+            messagebox.showerror("Preview Error", f"Could not load PDF preview: {str(e)}")
+            self.page_label.config(text="Preview not available")
+    
+    def update_preview(self):
+        """Update the preview with current page"""
+        if not self.pdf_doc or self.current_page >= self.total_pages:
+            return
+        
+        try:
+            page = self.pdf_doc[self.current_page]
+            
+            # Convert page to image with appropriate size for preview
+            mat = fitz.Matrix(0.5, 0.5)  # Scale down for preview
+            pix = page.get_pixmap(matrix=mat)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            
+            # Convert to PhotoImage for tkinter
+            self.preview_image = ImageTk.PhotoImage(img)
+            
+            # Clear canvas and add image
+            self.preview_canvas.delete("all")
+            self.preview_canvas.create_image(0, 0, anchor="nw", image=self.preview_image)
+            
+            # Update scroll region
+            self.preview_canvas.configure(scrollregion=self.preview_canvas.bbox("all"))
+            
+            # Update page label
+            self.page_label.config(text=f"Page {self.current_page + 1} of {self.total_pages}")
+            
+        except Exception as e:
+            self.page_label.config(text=f"Preview error: {str(e)}")
+    
+    def prev_page(self):
+        """Go to previous page"""
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.update_preview()
+    
+    def next_page(self):
+        """Go to next page"""
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            self.update_preview()
     
     def browse_input(self):
         filename = filedialog.askopenfilename(
@@ -280,6 +422,8 @@ class ScannerApp:
             # Suggest output filename
             base, ext = os.path.splitext(filename)
             self.output_pdf.set(f"{base}_scanned{ext}")
+            # Load preview
+            self.load_pdf_preview(filename)
     
     def browse_output(self):
         filename = filedialog.asksaveasfilename(
