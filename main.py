@@ -235,6 +235,8 @@ class ScannerApp:
         self.current_page = 0
         self.total_pages = 0
         self.preview_image = None
+        self.original_image = None
+        self.effects_applied = False
         
         self.create_widgets()
     
@@ -325,13 +327,16 @@ class ScannerApp:
         control_frame.pack(fill="x", padx=5, pady=5)
         
         self.prev_button = ttk.Button(control_frame, text="◀ Previous", command=self.prev_page, state="disabled")
-        self.prev_button.pack(side=tk.LEFT, padx=5)
+        self.prev_button.pack(side=tk.LEFT, padx=2)
         
         self.page_label = ttk.Label(control_frame, text="No PDF loaded")
         self.page_label.pack(side=tk.LEFT, expand=True)
         
+        self.preview_effects_button = ttk.Button(control_frame, text="Preview Effects", command=self.preview_effects, state="disabled")
+        self.preview_effects_button.pack(side=tk.RIGHT, padx=2)
+        
         self.next_button = ttk.Button(control_frame, text="Next ▶", command=self.next_page, state="disabled")
-        self.next_button.pack(side=tk.RIGHT, padx=5)
+        self.next_button.pack(side=tk.RIGHT, padx=2)
         
         # Preview canvas
         self.preview_canvas = tk.Canvas(parent, bg="white", width=300, height=400)
@@ -364,6 +369,7 @@ class ScannerApp:
                 self.update_preview()
                 self.prev_button.config(state="normal" if self.total_pages > 1 else "disabled")
                 self.next_button.config(state="normal" if self.total_pages > 1 else "disabled")
+                self.preview_effects_button.config(state="normal")
             else:
                 self.page_label.config(text="Empty PDF")
                 
@@ -371,7 +377,7 @@ class ScannerApp:
             messagebox.showerror("Preview Error", f"Could not load PDF preview: {str(e)}")
             self.page_label.config(text="Preview not available")
     
-    def update_preview(self):
+    def update_preview(self, force_original=False):
         """Update the preview with current page"""
         if not self.pdf_doc or self.current_page >= self.total_pages:
             return
@@ -380,12 +386,20 @@ class ScannerApp:
             page = self.pdf_doc[self.current_page]
             
             # Convert page to image with appropriate size for preview
-            mat = fitz.Matrix(0.5, 0.5)  # Scale down for preview
+            mat = fitz.Matrix(0.75, 0.75)  # Scale for preview
             pix = page.get_pixmap(matrix=mat)
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             
+            # Store original for effects preview
+            if force_original or self.original_image is None or not self.effects_applied:
+                self.original_image = img.copy()
+                self.effects_applied = False
+            
+            # Use current image (original or with effects)
+            display_img = img
+            
             # Convert to PhotoImage for tkinter
-            self.preview_image = ImageTk.PhotoImage(img)
+            self.preview_image = ImageTk.PhotoImage(display_img)
             
             # Clear canvas and add image
             self.preview_canvas.delete("all")
@@ -395,22 +409,80 @@ class ScannerApp:
             self.preview_canvas.configure(scrollregion=self.preview_canvas.bbox("all"))
             
             # Update page label
-            self.page_label.config(text=f"Page {self.current_page + 1} of {self.total_pages}")
+            effects_text = " (with effects)" if self.effects_applied else ""
+            self.page_label.config(text=f"Page {self.current_page + 1} of {self.total_pages}{effects_text}")
             
         except Exception as e:
             self.page_label.config(text=f"Preview error: {str(e)}")
+    
+    def preview_effects(self):
+        """Apply scanning effects to the current preview page"""
+        if not self.original_image:
+            return
+        
+        try:
+            # Get current options
+            options = {
+                'rotate': self.rotate.get(),
+                'max_rotation': self.max_rotation.get(),
+                'grayscale': self.grayscale.get(),
+                'bw': self.bw.get(),
+                'add_noise': self.add_noise.get(),
+                'fold_marks': self.fold_marks.get(),
+                'fold_count': self.fold_count.get(),
+                'add_shadow': self.add_shadow.get(),
+                'blur': self.blur.get()
+            }
+            
+            # Apply effects to the original image
+            img = self.original_image.copy()
+            
+            if options.get('rotate', True):
+                img = PDFScannerEffects.add_rotation(img, max_angle=options.get('max_rotation', 1.5))
+            
+            if options.get('grayscale', True):
+                img = PDFScannerEffects.convert_to_grayscale(img)
+            
+            if options.get('bw', False):
+                img = PDFScannerEffects.convert_to_black_and_white(img)
+            
+            if options.get('add_noise', True):
+                img = PDFScannerEffects.add_noise(img)
+            
+            if options.get('fold_marks', True):
+                img = PDFScannerEffects.add_fold_marks(img, count=options.get('fold_count', 1))
+            
+            if options.get('add_shadow', True):
+                img = PDFScannerEffects.add_edge_shadow(img)
+            
+            if options.get('blur', 0.5) > 0:
+                img = PDFScannerEffects.apply_blur(img, radius=options.get('blur', 0.5))
+            
+            # Update preview with effects
+            self.preview_image = ImageTk.PhotoImage(img)
+            self.preview_canvas.delete("all")
+            self.preview_canvas.create_image(0, 0, anchor="nw", image=self.preview_image)
+            self.preview_canvas.configure(scrollregion=self.preview_canvas.bbox("all"))
+            
+            self.effects_applied = True
+            self.page_label.config(text=f"Page {self.current_page + 1} of {self.total_pages} (with effects)")
+            
+        except Exception as e:
+            messagebox.showerror("Preview Error", f"Could not apply effects: {str(e)}")
     
     def prev_page(self):
         """Go to previous page"""
         if self.current_page > 0:
             self.current_page -= 1
-            self.update_preview()
+            self.effects_applied = False
+            self.update_preview(force_original=True)
     
     def next_page(self):
         """Go to next page"""
         if self.current_page < self.total_pages - 1:
             self.current_page += 1
-            self.update_preview()
+            self.effects_applied = False
+            self.update_preview(force_original=True)
     
     def browse_input(self):
         filename = filedialog.askopenfilename(
